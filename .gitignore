@@ -1,0 +1,41 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Runtime
+*.log
+*.tmp
+*.temp
+*.pid
+*.seed
+*.coverage
+*.nyc_output
+
+# Local development
+.env
+.env.local
+.env.*.local
+
+# Documentation build
+target/doc/
+
+# Test artifacts
+lcov.info
+coverage/

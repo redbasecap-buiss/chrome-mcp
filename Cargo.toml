@@ -1,0 +1,32 @@
+[package]
+name = "chrome-mcp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nicola Spieser <redbasecap-buiss@users.noreply.github.com>"]
+description = "Chrome browser automation via MCP – click anywhere"
+license = "Apache-2.0"
+repository = "https://github.com/redbasecap-buiss/chrome-mcp"
+keywords = ["chrome", "automation", "mcp", "browser", "devtools"]
+categories = ["development-tools", "automation"]
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio-tungstenite = "0.24"
+clap = { version = "4.0", features = ["derive"] }
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+url = "2.5"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
