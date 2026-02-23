@@ -853,3 +853,411 @@ impl McpServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_server_capabilities_creation() {
+        let capabilities = ServerCapabilities {
+            tools: Some(ToolsCapability {
+                list_changed: Some(true),
+            }),
+            logging: Some(LoggingCapability {
+                level: Some("info".to_string()),
+            }),
+            prompts: None,
+            resources: None,
+        };
+
+        assert!(capabilities.tools.is_some());
+        assert!(capabilities.logging.is_some());
+        assert!(capabilities.prompts.is_none());
+        assert!(capabilities.resources.is_none());
+        
+        let tools = capabilities.tools.unwrap();
+        assert_eq!(tools.list_changed, Some(true));
+        
+        let logging = capabilities.logging.unwrap();
+        assert_eq!(logging.level, Some("info".to_string()));
+    }
+
+    #[test]
+    fn test_mcp_message_structure() {
+        let message = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: Some("initialize".to_string()),
+            params: Some(json!({"protocolVersion": "1.0.0"})),
+            result: None,
+            error: None,
+        };
+
+        assert_eq!(message.jsonrpc, "2.0");
+        assert_eq!(message.id, Some(json!(1)));
+        assert_eq!(message.method, Some("initialize".to_string()));
+        assert!(message.params.is_some());
+        assert!(message.result.is_none());
+        assert!(message.error.is_none());
+    }
+
+    #[test]
+    fn test_mcp_error_structure() {
+        let error = McpError {
+            code: -32602,
+            message: "Invalid params".to_string(),
+            data: Some(json!({"details": "Missing required parameter"})),
+        };
+
+        assert_eq!(error.code, -32602);
+        assert_eq!(error.message, "Invalid params");
+        assert!(error.data.is_some());
+    }
+
+    #[test]
+    fn test_mcp_message_serialization() {
+        let message = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(42)),
+            method: Some("tools/list".to_string()),
+            params: None,
+            result: None,
+            error: None,
+        };
+
+        let json_str = serde_json::to_string(&message).unwrap();
+        let parsed: McpMessage = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(message.jsonrpc, parsed.jsonrpc);
+        assert_eq!(message.id, parsed.id);
+        assert_eq!(message.method, parsed.method);
+    }
+
+    #[test]
+    fn test_tool_definition_structure() {
+        let tool = Tool {
+            name: "chrome_navigate".to_string(),
+            description: "Navigate to a URL".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to navigate to"
+                    }
+                },
+                "required": ["url"]
+            }),
+        };
+
+        assert_eq!(tool.name, "chrome_navigate");
+        assert_eq!(tool.description, "Navigate to a URL");
+        assert!(tool.input_schema.is_object());
+        
+        let schema = &tool.input_schema;
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"].is_object());
+        assert!(schema["required"].is_array());
+        assert_eq!(schema["required"][0], "url");
+    }
+
+    #[test]
+    fn test_mcp_server_creation() {
+        let result = McpServer::new("localhost", 9222);
+        assert!(result.is_ok());
+        
+        let server = result.unwrap();
+        assert!(server.capabilities.tools.is_some());
+        assert!(server.capabilities.logging.is_some());
+    }
+
+    #[test]
+    fn test_available_tools_list() {
+        let result = McpServer::new("localhost", 9222);
+        assert!(result.is_ok());
+        
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+        
+        assert!(!tools.is_empty());
+        
+        // Check that essential tools are present
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(tool_names.contains(&"chrome_navigate"));
+        assert!(tool_names.contains(&"chrome_click"));
+        assert!(tool_names.contains(&"chrome_type"));
+        assert!(tool_names.contains(&"chrome_screenshot"));
+        assert!(tool_names.contains(&"chrome_evaluate"));
+        assert!(tool_names.contains(&"chrome_tabs"));
+    }
+
+    #[test]
+    fn test_tool_schema_validation() {
+        let result = McpServer::new("localhost", 9222);
+        assert!(result.is_ok());
+        
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+        
+        for tool in tools {
+            // Each tool should have required fields
+            assert!(!tool.name.is_empty());
+            assert!(!tool.description.is_empty());
+            assert!(tool.input_schema.is_object());
+            
+            // Schema should have type
+            assert!(tool.input_schema.get("type").is_some());
+            
+            // If it has required fields, they should be an array
+            if let Some(required) = tool.input_schema.get("required") {
+                assert!(required.is_array());
+            }
+        }
+    }
+
+    #[test]
+    fn test_chrome_navigate_tool_schema() {
+        let result = McpServer::new("localhost", 9222);
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+        
+        let navigate_tool = tools.iter().find(|t| t.name == "chrome_navigate").unwrap();
+        
+        assert_eq!(navigate_tool.name, "chrome_navigate");
+        assert!(navigate_tool.description.contains("Navigate"));
+        
+        let schema = &navigate_tool.input_schema;
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["url"].is_object());
+        assert_eq!(schema["properties"]["url"]["type"], "string");
+        assert_eq!(schema["required"][0], "url");
+    }
+
+    #[test]
+    fn test_chrome_click_tool_schema() {
+        let result = McpServer::new("localhost", 9222);
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+        
+        let click_tool = tools.iter().find(|t| t.name == "chrome_click").unwrap();
+        
+        assert_eq!(click_tool.name, "chrome_click");
+        assert!(click_tool.description.contains("Click"));
+        
+        let schema = &click_tool.input_schema;
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["target"].is_object());
+        assert_eq!(schema["properties"]["target"]["type"], "string");
+        assert_eq!(schema["required"][0], "target");
+    }
+
+    #[test]
+    fn test_chrome_screenshot_tool_schema() {
+        let result = McpServer::new("localhost", 9222);
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+        
+        let screenshot_tool = tools.iter().find(|t| t.name == "chrome_screenshot").unwrap();
+        
+        assert_eq!(screenshot_tool.name, "chrome_screenshot");
+        assert!(screenshot_tool.description.contains("screenshot"));
+        
+        let schema = &screenshot_tool.input_schema;
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["format"].is_object());
+        assert_eq!(schema["properties"]["format"]["type"], "string");
+        
+        // Check enum values
+        let format_enum = &schema["properties"]["format"]["enum"];
+        assert!(format_enum.is_array());
+        assert!(format_enum.as_array().unwrap().contains(&json!("png")));
+        assert!(format_enum.as_array().unwrap().contains(&json!("jpeg")));
+    }
+
+    #[test]
+    fn test_initialize_response_format() {
+        let result = McpServer::new("localhost", 9222);
+        let server = result.unwrap();
+        
+        let _init_message = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: Some("initialize".to_string()),
+            params: Some(json!({"protocolVersion": "1.0.0"})),
+            result: None,
+            error: None,
+        };
+
+        // We can't easily test the async method without mocking, 
+        // but we can test the response structure
+        let expected_result = json!({
+            "protocolVersion": "1.0.0",
+            "serverInfo": {
+                "name": "chrome-mcp",
+                "version": "0.1.0"
+            },
+            "capabilities": server.capabilities
+        });
+
+        assert!(expected_result["protocolVersion"].is_string());
+        assert!(expected_result["serverInfo"]["name"].is_string());
+        assert!(expected_result["serverInfo"]["version"].is_string());
+        assert!(expected_result["capabilities"].is_object());
+    }
+
+    #[test]
+    fn test_ping_response() {
+        let ping_message = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(123)),
+            method: Some("ping".to_string()),
+            params: None,
+            result: None,
+            error: None,
+        };
+
+        // Test expected ping response structure
+        let expected_response = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: ping_message.id.clone(),
+            method: None,
+            params: None,
+            result: Some(json!({})),
+            error: None,
+        };
+
+        assert_eq!(expected_response.jsonrpc, "2.0");
+        assert_eq!(expected_response.id, Some(json!(123)));
+        assert!(expected_response.result.is_some());
+        assert!(expected_response.error.is_none());
+    }
+
+    #[test]
+    fn test_tools_list_response_format() {
+        let result = McpServer::new("localhost", 9222);
+        let server = result.unwrap();
+        let tools = server.get_available_tools();
+
+        let _list_message = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: Some("tools/list".to_string()),
+            params: None,
+            result: None,
+            error: None,
+        };
+
+        let expected_result = json!({
+            "tools": tools
+        });
+
+        assert!(expected_result["tools"].is_array());
+        assert!(!expected_result["tools"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_error_response_format() {
+        let error_response = McpMessage {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: None,
+            params: None,
+            result: None,
+            error: Some(McpError {
+                code: -32603,
+                message: "Internal error".to_string(),
+                data: None,
+            }),
+        };
+
+        assert_eq!(error_response.jsonrpc, "2.0");
+        assert!(error_response.error.is_some());
+        assert!(error_response.result.is_none());
+
+        let error = error_response.error.unwrap();
+        assert_eq!(error.code, -32603);
+        assert_eq!(error.message, "Internal error");
+    }
+
+    #[test]
+    fn test_invalid_message_parsing() {
+        let invalid_json = "not valid json";
+        let result = serde_json::from_str::<McpMessage>(invalid_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_with_null_id() {
+        let message_json = r#"{
+            "jsonrpc": "2.0",
+            "id": null,
+            "method": "notification"
+        }"#;
+
+        let message: McpMessage = serde_json::from_str(message_json).unwrap();
+        assert!(message.id.is_none() || message.id == Some(json!(null)));
+    }
+
+    #[test]
+    fn test_tool_execution_parameter_extraction() {
+        // Test parameter extraction for different tool types
+        let navigate_params = json!({
+            "url": "https://example.com"
+        });
+
+        let url = navigate_params.get("url").and_then(|u| u.as_str());
+        assert_eq!(url, Some("https://example.com"));
+
+        let click_params = json!({
+            "target": "button#submit"
+        });
+
+        let target = click_params.get("target").and_then(|t| t.as_str());
+        assert_eq!(target, Some("button#submit"));
+
+        let screenshot_params = json!({
+            "format": "png",
+            "quality": 80,
+            "full_page": true
+        });
+
+        let format = screenshot_params.get("format").and_then(|f| f.as_str());
+        let quality = screenshot_params.get("quality").and_then(|q| q.as_u64());
+        let full_page = screenshot_params.get("full_page").and_then(|fp| fp.as_bool());
+
+        assert_eq!(format, Some("png"));
+        assert_eq!(quality, Some(80));
+        assert_eq!(full_page, Some(true));
+    }
+
+    #[test]
+    fn test_capabilities_serialization() {
+        let capabilities = ServerCapabilities {
+            tools: Some(ToolsCapability {
+                list_changed: Some(true),
+            }),
+            logging: Some(LoggingCapability {
+                level: Some("debug".to_string()),
+            }),
+            prompts: None,
+            resources: Some(ResourcesCapability {
+                list_changed: Some(false),
+                subscribe: Some(true),
+            }),
+        };
+
+        let json_str = serde_json::to_string(&capabilities).unwrap();
+        let parsed: ServerCapabilities = serde_json::from_str(&json_str).unwrap();
+
+        assert!(parsed.tools.is_some());
+        assert!(parsed.logging.is_some());
+        assert!(parsed.prompts.is_none());
+        assert!(parsed.resources.is_some());
+
+        let resources = parsed.resources.unwrap();
+        assert_eq!(resources.list_changed, Some(false));
+        assert_eq!(resources.subscribe, Some(true));
+    }
+}

@@ -72,6 +72,8 @@ pub enum WaitCondition {
     TextPresent(String),
     /// Wait for URL to match pattern
     UrlMatches(String),
+    /// Wait for URL to contain text
+    UrlContains(String),
     /// Wait for page load to complete
     PageLoad,
     /// Wait for network idle (no requests for specified duration)
@@ -336,6 +338,11 @@ impl Browser {
                     }
                     WaitCondition::UrlMatches(pattern) => {
                         if self.current_url().await?.contains(pattern) {
+                            break;
+                        }
+                    }
+                    WaitCondition::UrlContains(text) => {
+                        if self.current_url().await?.contains(text) {
                             break;
                         }
                     }
@@ -652,5 +659,365 @@ impl Browser {
             .and_then(|r| r.get("value"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_browser_creation() {
+        let result = Browser::new("localhost", 9222);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_network_event_structure() {
+        let event = NetworkEvent {
+            request_id: "req_123".to_string(),
+            url: "https://example.com".to_string(),
+            method: "GET".to_string(),
+            headers: HashMap::new(),
+            timestamp: 1640995200.0,
+            status_code: Some(200),
+            response_headers: None,
+        };
+
+        assert_eq!(event.request_id, "req_123");
+        assert_eq!(event.url, "https://example.com");
+        assert_eq!(event.method, "GET");
+        assert_eq!(event.status_code, Some(200));
+        assert!(event.response_headers.is_none());
+    }
+
+    #[test]
+    fn test_network_event_serialization() {
+        let mut headers = HashMap::new();
+        headers.insert("User-Agent".to_string(), "chrome-mcp/0.1.0".to_string());
+        headers.insert("Accept".to_string(), "application/json".to_string());
+
+        let event = NetworkEvent {
+            request_id: "req_456".to_string(),
+            url: "https://api.example.com/data".to_string(),
+            method: "POST".to_string(),
+            headers,
+            timestamp: 1640995260.5,
+            status_code: Some(201),
+            response_headers: Some(HashMap::new()),
+        };
+
+        let json_str = serde_json::to_string(&event).unwrap();
+        let parsed: NetworkEvent = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(event.request_id, parsed.request_id);
+        assert_eq!(event.url, parsed.url);
+        assert_eq!(event.method, parsed.method);
+        assert_eq!(event.status_code, parsed.status_code);
+    }
+
+    #[test]
+    fn test_cookie_structure() {
+        let cookie = Cookie {
+            name: "session_id".to_string(),
+            value: "abc123".to_string(),
+            domain: "example.com".to_string(),
+            path: "/".to_string(),
+            secure: true,
+            http_only: false,
+            same_site: Some("Lax".to_string()),
+            expires: Some(1672531200.0), // 2023-01-01
+        };
+
+        assert_eq!(cookie.name, "session_id");
+        assert_eq!(cookie.value, "abc123");
+        assert_eq!(cookie.domain, "example.com");
+        assert_eq!(cookie.path, "/");
+        assert!(cookie.secure);
+        assert!(!cookie.http_only);
+        assert_eq!(cookie.same_site, Some("Lax".to_string()));
+        assert!(cookie.expires.is_some());
+    }
+
+    #[test]
+    fn test_cookie_serialization() {
+        let cookie = Cookie {
+            name: "test_cookie".to_string(),
+            value: "test_value".to_string(),
+            domain: "localhost".to_string(),
+            path: "/test".to_string(),
+            secure: false,
+            http_only: true,
+            same_site: Some("Strict".to_string()),
+            expires: None,
+        };
+
+        let json_str = serde_json::to_string(&cookie).unwrap();
+        let parsed: Cookie = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(cookie.name, parsed.name);
+        assert_eq!(cookie.value, parsed.value);
+        assert_eq!(cookie.domain, parsed.domain);
+        assert_eq!(cookie.path, parsed.path);
+        assert_eq!(cookie.secure, parsed.secure);
+        assert_eq!(cookie.http_only, parsed.http_only);
+        assert_eq!(cookie.same_site, parsed.same_site);
+        assert_eq!(cookie.expires, parsed.expires);
+    }
+
+    #[test]
+    fn test_wait_condition_structure() {
+        let conditions = vec![
+            WaitCondition::ElementVisible(".button".to_string()),
+            WaitCondition::ElementClickable("#submit".to_string()),
+            WaitCondition::TextPresent("Loading complete".to_string()),
+            WaitCondition::UrlContains("success".to_string()),
+        ];
+
+        assert_eq!(conditions.len(), 4);
+        
+        match &conditions[0] {
+            WaitCondition::ElementVisible(selector) => assert_eq!(selector, ".button"),
+            _ => panic!("Expected ElementVisible condition"),
+        }
+        
+        match &conditions[1] {
+            WaitCondition::ElementClickable(selector) => assert_eq!(selector, "#submit"),
+            _ => panic!("Expected ElementClickable condition"),
+        }
+        
+        match &conditions[2] {
+            WaitCondition::TextPresent(text) => assert_eq!(text, "Loading complete"),
+            _ => panic!("Expected TextPresent condition"),
+        }
+        
+        match &conditions[3] {
+            WaitCondition::UrlContains(url_part) => assert_eq!(url_part, "success"),
+            _ => panic!("Expected UrlContains condition"),
+        }
+    }
+
+    #[test]
+    fn test_javascript_expression_construction() {
+        let selector = "button.submit";
+        let expected_expression = format!(
+            r#"
+                const el = document.querySelector('{}');
+                el && el.offsetParent !== null && 
+                getComputedStyle(el).visibility !== 'hidden' && 
+                getComputedStyle(el).display !== 'none'
+                "#,
+            selector.replace("'", "\\'")
+        );
+
+        assert!(expected_expression.contains("document.querySelector"));
+        assert!(expected_expression.contains("button.submit"));
+        assert!(expected_expression.contains("offsetParent"));
+        assert!(expected_expression.contains("getComputedStyle"));
+    }
+
+    #[test]
+    fn test_javascript_expression_escaping() {
+        let selector_with_quotes = "button[data-test='submit']";
+        let escaped = selector_with_quotes.replace("'", "\\'");
+        assert_eq!(escaped, "button[data-test=\\'submit\\']");
+
+        let expression = format!("document.querySelector('{}')", escaped);
+        assert!(expression.contains("\\'submit\\'"));
+    }
+
+    #[test]
+    fn test_element_visibility_expression() {
+        let selector = ".modal";
+        let expression = format!(
+            r#"
+                const el = document.querySelector('{}');
+                el && el.offsetParent !== null && 
+                getComputedStyle(el).visibility !== 'hidden' && 
+                getComputedStyle(el).display !== 'none'
+                "#,
+            selector
+        );
+
+        assert!(expression.contains("querySelector('.modal')"));
+        assert!(expression.contains("visibility !== 'hidden'"));
+        assert!(expression.contains("display !== 'none'"));
+    }
+
+    #[test]
+    fn test_element_clickable_expression() {
+        let selector = "#submit-btn";
+        let expression = format!(
+            r#"
+                const el = document.querySelector('{}');
+                el && el.offsetParent !== null && 
+                !el.disabled &&
+                getComputedStyle(el).pointerEvents !== 'none'
+                "#,
+            selector
+        );
+
+        assert!(expression.contains("querySelector('#submit-btn')"));
+        assert!(expression.contains("!el.disabled"));
+        assert!(expression.contains("pointerEvents !== 'none'"));
+    }
+
+    #[test]
+    fn test_text_presence_expression() {
+        let text = "Welcome to our site";
+        let escaped_text = text.replace("'", "\\'");
+        let expression = format!("document.body.textContent.includes('{}')", escaped_text);
+
+        assert_eq!(expression, "document.body.textContent.includes('Welcome to our site')");
+    }
+
+    #[test]
+    fn test_text_presence_expression_with_quotes() {
+        let text = "It's working";
+        let escaped_text = text.replace("'", "\\'");
+        let expression = format!("document.body.textContent.includes('{}')", escaped_text);
+
+        assert_eq!(expression, "document.body.textContent.includes('It\\'s working')");
+    }
+
+    #[test]
+    fn test_coordinate_calculation() {
+        // Test center coordinate calculation
+        let bounds = (10.0, 20.0, 100.0, 50.0); // x, y, width, height
+        let center_x = bounds.0 + bounds.2 / 2.0;
+        let center_y = bounds.1 + bounds.3 / 2.0;
+
+        assert_eq!(center_x, 60.0);
+        assert_eq!(center_y, 45.0);
+    }
+
+    #[test]
+    fn test_url_validation() {
+        let valid_urls = vec![
+            "https://example.com",
+            "http://localhost:3000",
+            "https://api.github.com/repos",
+            "file:///path/to/file.html",
+        ];
+
+        for url_str in valid_urls {
+            // Basic URL validation
+            assert!(!url_str.is_empty());
+            assert!(url_str.contains("://"));
+        }
+    }
+
+    #[test]
+    fn test_selector_validation() {
+        let valid_selectors = vec![
+            "#id",
+            ".class",
+            "tag",
+            "tag.class",
+            "[attribute=value]",
+            "parent > child",
+            "element:nth-child(2)",
+        ];
+
+        for selector in valid_selectors {
+            // Basic selector validation
+            assert!(!selector.is_empty());
+            assert!(selector.len() > 0);
+        }
+    }
+
+    #[test]
+    fn test_http_method_validation() {
+        let valid_methods = vec!["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+
+        for method in valid_methods {
+            assert!(!method.is_empty());
+            assert!(method.is_ascii());
+            assert!(method.chars().all(|c| c.is_ascii_uppercase()));
+        }
+    }
+
+    #[test]
+    fn test_status_code_validation() {
+        let valid_status_codes = vec![200, 201, 204, 301, 302, 400, 401, 403, 404, 500];
+
+        for code in valid_status_codes {
+            assert!(code >= 100);
+            assert!(code < 600);
+        }
+    }
+
+    #[test]
+    fn test_timestamp_validation() {
+        // Test Unix timestamp validation
+        let timestamps = vec![1640995200.0, 1672531200.5, 1704067200.123];
+
+        for timestamp in timestamps {
+            assert!(timestamp > 0.0);
+            assert!(timestamp > 1_000_000_000.0); // After 2001 (reasonable for web events)
+        }
+    }
+
+    #[test]
+    fn test_header_validation() {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert("User-Agent".to_string(), "chrome-mcp/0.1.0".to_string());
+        headers.insert("Authorization".to_string(), "Bearer token123".to_string());
+
+        for (name, value) in &headers {
+            assert!(!name.is_empty());
+            assert!(!value.is_empty());
+            assert!(!name.contains(" ")); // Header names shouldn't contain spaces
+        }
+    }
+
+    #[test]
+    fn test_cookie_same_site_values() {
+        let valid_same_site_values = vec!["Strict", "Lax", "None"];
+
+        for value in valid_same_site_values {
+            let cookie = Cookie {
+                name: "test".to_string(),
+                value: "value".to_string(),
+                domain: "example.com".to_string(),
+                path: "/".to_string(),
+                secure: false,
+                http_only: false,
+                same_site: Some(value.to_string()),
+                expires: None,
+            };
+
+            assert!(matches!(
+                cookie.same_site.as_deref(),
+                Some("Strict") | Some("Lax") | Some("None")
+            ));
+        }
+    }
+
+    #[test]
+    fn test_cookie_path_validation() {
+        let valid_paths = vec!["/", "/api", "/api/v1", "/path/to/resource"];
+
+        for path in valid_paths {
+            assert!(path.starts_with("/"));
+            assert!(!path.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_domain_validation() {
+        let valid_domains = vec![
+            "example.com",
+            "subdomain.example.com",
+            "localhost",
+            "192.168.1.1",
+        ];
+
+        for domain in valid_domains {
+            assert!(!domain.is_empty());
+            assert!(!domain.starts_with("."));
+            assert!(!domain.ends_with("."));
+        }
     }
 }

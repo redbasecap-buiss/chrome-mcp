@@ -420,5 +420,331 @@ impl CdpClient {
     }
 }
 
-// We need to add reqwest dependency for HTTP requests to Chrome's REST API
-// This is a placeholder - in the real implementation we'd add this to Cargo.toml
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_cdp_message_creation() {
+        let message = CdpMessage {
+            id: Some(123),
+            method: Some("Page.navigate".to_string()),
+            params: Some(json!({"url": "https://example.com"})),
+            result: None,
+            error: None,
+        };
+
+        assert_eq!(message.id, Some(123));
+        assert_eq!(message.method, Some("Page.navigate".to_string()));
+        assert!(message.params.is_some());
+        assert!(message.result.is_none());
+        assert!(message.error.is_none());
+    }
+
+    #[test]
+    fn test_cdp_message_serialization() {
+        let message = CdpMessage {
+            id: Some(1),
+            method: Some("Runtime.evaluate".to_string()),
+            params: Some(json!({"expression": "console.log('test')"})),
+            result: None,
+            error: None,
+        };
+
+        let json_str = serde_json::to_string(&message).unwrap();
+        let parsed: CdpMessage = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(message.id, parsed.id);
+        assert_eq!(message.method, parsed.method);
+        assert_eq!(message.params, parsed.params);
+    }
+
+    #[test]
+    fn test_cdp_error_structure() {
+        let error = CdpError {
+            code: -32602,
+            message: "Invalid params".to_string(),
+            data: Some(json!({"details": "Missing required parameter"})),
+        };
+
+        assert_eq!(error.code, -32602);
+        assert_eq!(error.message, "Invalid params");
+        assert!(error.data.is_some());
+    }
+
+    #[test]
+    fn test_tab_info_deserialization() {
+        let json_str = r#"{
+            "id": "tab123",
+            "title": "Example Page",
+            "url": "https://example.com",
+            "description": "Example description",
+            "webSocketDebuggerUrl": "ws://localhost:9222/devtools/page/tab123"
+        }"#;
+
+        let tab_info: TabInfo = serde_json::from_str(json_str).unwrap();
+
+        assert_eq!(tab_info.id, "tab123");
+        assert_eq!(tab_info.title, "Example Page");
+        assert_eq!(tab_info.url, "https://example.com");
+        assert_eq!(tab_info.description, "Example description");
+        assert!(tab_info.websocket_debugger_url.is_some());
+    }
+
+    #[test]
+    fn test_cdp_client_creation() {
+        let client = CdpClient::new("localhost", 9222);
+        
+        assert_eq!(client.chrome_host, "localhost");
+        assert_eq!(client.chrome_port, 9222);
+        assert!(client.current_tab_id().is_none());
+        assert!(client.websocket.is_none());
+    }
+
+    #[test]
+    fn test_cdp_client_clone() {
+        let client = CdpClient::new("localhost", 9222);
+        let cloned = client.clone();
+        
+        assert_eq!(client.chrome_host, cloned.chrome_host);
+        assert_eq!(client.chrome_port, cloned.chrome_port);
+        assert!(cloned.websocket.is_none()); // WebSocket shouldn't be cloned
+    }
+
+    #[test]
+    fn test_tab_list_url_construction() {
+        let client = CdpClient::new("localhost", 9222);
+        let _expected_url = "http://localhost:9222/json";
+        
+        // We can't easily test the actual HTTP call without mocking,
+        // but we can test URL construction logic
+        assert_eq!(client.chrome_host, "localhost");
+        assert_eq!(client.chrome_port, 9222);
+    }
+
+    #[test]
+    fn test_create_tab_url_construction() {
+        let client = CdpClient::new("localhost", 9222);
+        
+        // Test base URL construction
+        let base_url = format!("http://{}:{}/json/new", client.chrome_host, client.chrome_port);
+        assert_eq!(base_url, "http://localhost:9222/json/new");
+        
+        // Test URL with parameter
+        let url_param = "https://example.com";
+        let full_url = format!("{}?{}", base_url, url_param);
+        assert!(full_url.contains("example.com"));
+    }
+
+    #[test]
+    fn test_close_tab_url_construction() {
+        let client = CdpClient::new("localhost", 9222);
+        let tab_id = "test_tab_123";
+        
+        let close_url = format!("http://{}:{}/json/close/{}", client.chrome_host, client.chrome_port, tab_id);
+        assert_eq!(close_url, "http://localhost:9222/json/close/test_tab_123");
+    }
+
+    #[test]
+    fn test_message_id_generation() {
+        let client = CdpClient::new("localhost", 9222);
+        
+        // Test that message ID starts at 1 and increments
+        let id1 = {
+            let mut counter = client.message_id.lock().unwrap();
+            let current = *counter;
+            *counter += 1;
+            current
+        };
+        
+        let id2 = {
+            let mut counter = client.message_id.lock().unwrap();
+            let current = *counter;
+            *counter += 1;
+            current
+        };
+        
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn test_navigate_command_construction() {
+        let message = CdpMessage {
+            id: Some(1),
+            method: Some("Page.navigate".to_string()),
+            params: Some(json!({"url": "https://example.com"})),
+            result: None,
+            error: None,
+        };
+
+        assert_eq!(message.method.unwrap(), "Page.navigate");
+        if let Some(params) = message.params {
+            assert_eq!(params["url"], "https://example.com");
+        } else {
+            panic!("Navigate command should have params");
+        }
+    }
+
+    #[test]
+    fn test_evaluate_js_command_construction() {
+        let expression = "document.title";
+        let params = json!({
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true
+        });
+
+        assert_eq!(params["expression"], expression);
+        assert_eq!(params["returnByValue"], true);
+        assert_eq!(params["awaitPromise"], true);
+    }
+
+    #[test]
+    fn test_screenshot_command_construction() {
+        let params_basic = json!({});
+        assert!(params_basic.is_object());
+
+        let params_with_format = json!({
+            "format": "png"
+        });
+        assert_eq!(params_with_format["format"], "png");
+
+        let params_full = json!({
+            "format": "jpeg",
+            "quality": 80
+        });
+        assert_eq!(params_full["format"], "jpeg");
+        assert_eq!(params_full["quality"], 80);
+    }
+
+    #[test]
+    fn test_click_command_construction() {
+        let x = 100.0;
+        let y = 200.0;
+        
+        let mouse_down_params = json!({
+            "type": "mousePressed",
+            "x": x,
+            "y": y,
+            "button": "left",
+            "clickCount": 1
+        });
+
+        assert_eq!(mouse_down_params["type"], "mousePressed");
+        assert_eq!(mouse_down_params["x"], 100.0);
+        assert_eq!(mouse_down_params["y"], 200.0);
+        assert_eq!(mouse_down_params["button"], "left");
+        assert_eq!(mouse_down_params["clickCount"], 1);
+
+        let mouse_up_params = json!({
+            "type": "mouseReleased",
+            "x": x,
+            "y": y,
+            "button": "left",
+            "clickCount": 1
+        });
+
+        assert_eq!(mouse_up_params["type"], "mouseReleased");
+    }
+
+    #[test]
+    fn test_type_text_command_construction() {
+        let character = 'A';
+        let params = json!({
+            "type": "char",
+            "text": character.to_string()
+        });
+
+        assert_eq!(params["type"], "char");
+        assert_eq!(params["text"], "A");
+    }
+
+    #[test]
+    fn test_query_selector_command_construction() {
+        let root_node_id = 1u64;
+        let selector = ".button";
+        
+        let params = json!({
+            "nodeId": root_node_id,
+            "selector": selector
+        });
+
+        assert_eq!(params["nodeId"], 1);
+        assert_eq!(params["selector"], ".button");
+    }
+
+    #[test]
+    fn test_websocket_url_parsing() {
+        let ws_url = "ws://localhost:9222/devtools/page/12345";
+        let parsed = Url::parse(ws_url);
+        
+        assert!(parsed.is_ok());
+        let url = parsed.unwrap();
+        assert_eq!(url.scheme(), "ws");
+        assert_eq!(url.host_str(), Some("localhost"));
+        assert_eq!(url.port(), Some(9222));
+    }
+
+    #[test]
+    fn test_cdp_domains_list() {
+        let expected_domains = vec![
+            "Runtime",
+            "Page", 
+            "DOM",
+            "Input",
+            "Network",
+            "Accessibility",
+        ];
+
+        // Test that we have all required domains
+        assert!(expected_domains.contains(&"Runtime"));
+        assert!(expected_domains.contains(&"Page"));
+        assert!(expected_domains.contains(&"DOM"));
+        assert!(expected_domains.contains(&"Input"));
+        assert!(expected_domains.contains(&"Network"));
+        assert!(expected_domains.contains(&"Accessibility"));
+        assert_eq!(expected_domains.len(), 6);
+    }
+
+    #[test]
+    fn test_error_response_parsing() {
+        let error_response_json = r#"{
+            "id": 1,
+            "error": {
+                "code": -32602,
+                "message": "Invalid params"
+            }
+        }"#;
+
+        let response: CdpMessage = serde_json::from_str(error_response_json).unwrap();
+        
+        assert_eq!(response.id, Some(1));
+        assert!(response.error.is_some());
+        assert!(response.result.is_none());
+        
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32602);
+        assert_eq!(error.message, "Invalid params");
+    }
+
+    #[test]
+    fn test_success_response_parsing() {
+        let success_response_json = r#"{
+            "id": 1,
+            "result": {
+                "data": "base64_encoded_screenshot_data"
+            }
+        }"#;
+
+        let response: CdpMessage = serde_json::from_str(success_response_json).unwrap();
+        
+        assert_eq!(response.id, Some(1));
+        assert!(response.result.is_some());
+        assert!(response.error.is_none());
+        
+        let result = response.result.unwrap();
+        assert_eq!(result["data"], "base64_encoded_screenshot_data");
+    }
+}

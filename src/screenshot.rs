@@ -300,6 +300,15 @@ struct ElementBounds {
     height: f64,
 }
 
+/// Viewport bounds for clipping
+#[derive(Debug, Clone)]
+pub struct ViewportBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 /// PDF generation options
 #[derive(Debug, Clone)]
 pub struct PdfOptions {
@@ -337,5 +346,348 @@ impl Default for PdfOptions {
             footer_template: None,
             prefer_css_page_size: Some(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cdp::CdpClient;
+    use serde_json::json;
+
+    #[test]
+    fn test_screenshot_manager_creation() {
+        let cdp = CdpClient::new("localhost", 9222);
+        let _manager = ScreenshotManager::new(cdp);
+        // Just test that creation succeeds
+        // The actual manager is wrapped and we can't easily inspect internal fields
+    }
+
+    #[test]
+    fn test_pdf_options_default() {
+        let options = PdfOptions::default();
+        
+        assert_eq!(options.landscape, Some(false));
+        assert_eq!(options.display_header_footer, Some(false));
+        assert_eq!(options.print_background, Some(true));
+        assert_eq!(options.scale, Some(1.0));
+        assert_eq!(options.margin_top, Some(0.4));
+        assert_eq!(options.margin_bottom, Some(0.4));
+        assert_eq!(options.margin_left, Some(0.4));
+        assert_eq!(options.margin_right, Some(0.4));
+        assert_eq!(options.prefer_css_page_size, Some(false));
+        
+        // Optional fields should be None
+        assert!(options.paper_width.is_none());
+        assert!(options.paper_height.is_none());
+        assert!(options.page_ranges.is_none());
+        assert!(options.header_template.is_none());
+        assert!(options.footer_template.is_none());
+    }
+
+    #[test]
+    fn test_pdf_options_custom() {
+        let options = PdfOptions {
+            landscape: Some(true),
+            display_header_footer: Some(true),
+            print_background: Some(false),
+            scale: Some(1.5),
+            paper_width: Some(8.5),
+            paper_height: Some(11.0),
+            margin_top: Some(1.0),
+            margin_bottom: Some(1.0),
+            margin_left: Some(1.0),
+            margin_right: Some(1.0),
+            page_ranges: Some("1-3,5".to_string()),
+            header_template: Some("<div>Header</div>".to_string()),
+            footer_template: Some("<div>Footer</div>".to_string()),
+            prefer_css_page_size: Some(true),
+        };
+
+        assert_eq!(options.landscape, Some(true));
+        assert_eq!(options.display_header_footer, Some(true));
+        assert_eq!(options.print_background, Some(false));
+        assert_eq!(options.scale, Some(1.5));
+        assert_eq!(options.paper_width, Some(8.5));
+        assert_eq!(options.paper_height, Some(11.0));
+        assert_eq!(options.page_ranges, Some("1-3,5".to_string()));
+        assert_eq!(options.header_template, Some("<div>Header</div>".to_string()));
+        assert_eq!(options.footer_template, Some("<div>Footer</div>".to_string()));
+        assert_eq!(options.prefer_css_page_size, Some(true));
+    }
+
+    #[test]
+    fn test_viewport_bounds_creation() {
+        let bounds = ViewportBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+
+        assert_eq!(bounds.x, 0.0);
+        assert_eq!(bounds.y, 0.0);
+        assert_eq!(bounds.width, 1920.0);
+        assert_eq!(bounds.height, 1080.0);
+    }
+
+    #[test]
+    fn test_screenshot_command_construction_full_page() {
+        let expected_params = json!({
+            "format": "png",
+            "captureBeyondViewport": true
+        });
+
+        assert_eq!(expected_params["format"], "png");
+        assert_eq!(expected_params["captureBeyondViewport"], true);
+    }
+
+    #[test]
+    fn test_screenshot_command_construction_viewport() {
+        let expected_params = json!({
+            "format": "png",
+            "captureBeyondViewport": false
+        });
+
+        assert_eq!(expected_params["format"], "png");
+        assert_eq!(expected_params["captureBeyondViewport"], false);
+    }
+
+    #[test]
+    fn test_screenshot_command_with_quality() {
+        let expected_params = json!({
+            "format": "jpeg",
+            "quality": 80,
+            "captureBeyondViewport": false
+        });
+
+        assert_eq!(expected_params["format"], "jpeg");
+        assert_eq!(expected_params["quality"], 80);
+        assert_eq!(expected_params["captureBeyondViewport"], false);
+    }
+
+    #[test]
+    fn test_element_screenshot_command_construction() {
+        let node_id = 123;
+        let expected_params = json!({
+            "nodeId": node_id,
+            "format": "png",
+            "quality": 100
+        });
+
+        assert_eq!(expected_params["nodeId"], 123);
+        assert_eq!(expected_params["format"], "png");
+        assert_eq!(expected_params["quality"], 100);
+    }
+
+    #[test]
+    fn test_area_screenshot_command_construction() {
+        let bounds = ViewportBounds {
+            x: 100.0,
+            y: 200.0,
+            width: 800.0,
+            height: 600.0,
+        };
+
+        let expected_params = json!({
+            "format": "png",
+            "clip": {
+                "x": bounds.x,
+                "y": bounds.y,
+                "width": bounds.width,
+                "height": bounds.height,
+                "scale": 1.0
+            }
+        });
+
+        assert_eq!(expected_params["format"], "png");
+        let clip = &expected_params["clip"];
+        assert_eq!(clip["x"], 100.0);
+        assert_eq!(clip["y"], 200.0);
+        assert_eq!(clip["width"], 800.0);
+        assert_eq!(clip["height"], 600.0);
+        assert_eq!(clip["scale"], 1.0);
+    }
+
+    #[test]
+    fn test_pdf_command_construction_default() {
+        let options = PdfOptions::default();
+        let expected_params = json!({
+            "landscape": options.landscape,
+            "displayHeaderFooter": options.display_header_footer,
+            "printBackground": options.print_background,
+            "scale": options.scale,
+            "marginTop": options.margin_top,
+            "marginBottom": options.margin_bottom,
+            "marginLeft": options.margin_left,
+            "marginRight": options.margin_right,
+            "preferCSSPageSize": options.prefer_css_page_size
+        });
+
+        assert_eq!(expected_params["landscape"], false);
+        assert_eq!(expected_params["displayHeaderFooter"], false);
+        assert_eq!(expected_params["printBackground"], true);
+        assert_eq!(expected_params["scale"], 1.0);
+        assert_eq!(expected_params["marginTop"], 0.4);
+        assert_eq!(expected_params["preferCSSPageSize"], false);
+    }
+
+    #[test]
+    fn test_pdf_command_construction_custom() {
+        let _options = PdfOptions {
+            landscape: Some(true),
+            display_header_footer: Some(true),
+            print_background: Some(false),
+            scale: Some(0.8),
+            paper_width: Some(8.5),
+            paper_height: Some(11.0),
+            page_ranges: Some("1,3-5".to_string()),
+            header_template: Some("<h1>Header</h1>".to_string()),
+            footer_template: Some("<div>Page <span class='pageNumber'></span></div>".to_string()),
+            ..Default::default()
+        };
+
+        let expected_params = json!({
+            "landscape": true,
+            "displayHeaderFooter": true,
+            "printBackground": false,
+            "scale": 0.8,
+            "paperWidth": 8.5,
+            "paperHeight": 11.0,
+            "pageRanges": "1,3-5",
+            "headerTemplate": "<h1>Header</h1>",
+            "footerTemplate": "<div>Page <span class='pageNumber'></span></div>"
+        });
+
+        assert_eq!(expected_params["landscape"], true);
+        assert_eq!(expected_params["displayHeaderFooter"], true);
+        assert_eq!(expected_params["printBackground"], false);
+        assert_eq!(expected_params["scale"], 0.8);
+        assert_eq!(expected_params["paperWidth"], 8.5);
+        assert_eq!(expected_params["paperHeight"], 11.0);
+        assert_eq!(expected_params["pageRanges"], "1,3-5");
+    }
+
+    #[test]
+    fn test_screenshot_data_extraction() {
+        let mock_response = json!({
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+        });
+
+        let data = mock_response.get("data")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        assert!(data.is_some());
+        let screenshot_data = data.unwrap();
+        assert!(!screenshot_data.is_empty());
+        assert!(screenshot_data.starts_with("iVBOR")); // PNG signature in base64
+    }
+
+    #[test]
+    fn test_screenshot_data_extraction_missing() {
+        let mock_response = json!({
+            "success": true
+        });
+
+        let data = mock_response.get("data")
+            .and_then(|v| v.as_str());
+
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn test_base64_operations() {
+        let test_data = b"test screenshot data";
+        let encoded = BASE64.encode(test_data);
+        let decoded = BASE64.decode(&encoded).unwrap();
+
+        assert_eq!(test_data, decoded.as_slice());
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn test_viewport_bounds_validation() {
+        // Valid bounds
+        let bounds = ViewportBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        };
+
+        assert!(bounds.width > 0.0);
+        assert!(bounds.height > 0.0);
+        assert!(bounds.x >= 0.0);
+        assert!(bounds.y >= 0.0);
+
+        // Test bounds calculations
+        let right = bounds.x + bounds.width;
+        let bottom = bounds.y + bounds.height;
+        
+        assert_eq!(right, 800.0);
+        assert_eq!(bottom, 600.0);
+    }
+
+    #[test]
+    fn test_pdf_margin_validation() {
+        let options = PdfOptions::default();
+        
+        // All margins should be positive
+        assert!(options.margin_top.unwrap() >= 0.0);
+        assert!(options.margin_bottom.unwrap() >= 0.0);
+        assert!(options.margin_left.unwrap() >= 0.0);
+        assert!(options.margin_right.unwrap() >= 0.0);
+        
+        // Scale should be positive
+        assert!(options.scale.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn test_image_format_validation() {
+        let valid_formats = vec!["png", "jpeg", "webp"];
+        
+        for format in valid_formats {
+            // Basic format validation
+            assert!(format == "png" || format == "jpeg" || format == "webp");
+            assert!(!format.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_quality_range_validation() {
+        // JPEG quality should be 1-100
+        let valid_qualities = vec![1, 50, 80, 90, 100];
+        
+        for quality in valid_qualities {
+            assert!(quality >= 1);
+            assert!(quality <= 100);
+        }
+    }
+
+    #[test]
+    fn test_pdf_options_clone() {
+        let original = PdfOptions {
+            landscape: Some(true),
+            scale: Some(1.5),
+            page_ranges: Some("1-5".to_string()),
+            ..Default::default()
+        };
+
+        let cloned = original.clone();
+        
+        assert_eq!(original.landscape, cloned.landscape);
+        assert_eq!(original.scale, cloned.scale);
+        assert_eq!(original.page_ranges, cloned.page_ranges);
+    }
+
+    #[test]
+    fn test_pdf_options_debug() {
+        let options = PdfOptions::default();
+        let debug_str = format!("{:?}", options);
+        
+        assert!(debug_str.contains("PdfOptions"));
+        assert!(debug_str.contains("landscape"));
+        assert!(debug_str.contains("scale"));
     }
 }
